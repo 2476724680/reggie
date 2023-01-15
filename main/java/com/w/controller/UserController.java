@@ -10,6 +10,7 @@ import com.w.utils.ValidateCodeUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.tomcat.util.codec.binary.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import javax.servlet.http.HttpSession;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 @RestController
 @RequestMapping("/user")
@@ -25,6 +27,9 @@ public class UserController {
 
     @Autowired
     private UserService userService;
+
+    @Autowired
+    private RedisTemplate redisTemplate;
 
 
     //手机登录  ——>发送验证码
@@ -45,7 +50,10 @@ public class UserController {
             //SMSUtils.sendMessage("瑞吉外卖","",phone,code);
 
             //将生成的验证码存到Session中
-            session.setAttribute(phone,code);
+            //session.setAttribute(phone,code);
+
+            //将生成验证码缓存到redis中 并设置有效期为5分钟
+            redisTemplate.opsForValue().set(phone,code,5, TimeUnit.MINUTES);
 
             return R.success("手机验证码短信发送成功");
         }
@@ -62,7 +70,10 @@ public class UserController {
         String code = map.get("code").toString();
 
         //从Session中获取保存的code验证码
-        String codeInSession = session.getAttribute(phone).toString();
+        //String codeInSession = session.getAttribute(phone).toString();
+
+        //从redis中获取验证码
+        Object codeInSession = redisTemplate.opsForValue().get(phone);
 
         //比对验证码
         if(codeInSession!=null&&codeInSession.equals(code)){
@@ -79,6 +90,10 @@ public class UserController {
             }
             //登录成功 要将userId存入Session中
             session.setAttribute("user",user.getId());
+
+            //登录成功 将redis中的验证码删除
+            redisTemplate.delete(phone);
+
             return R.success(user);
         }
         return R.error("登录失败");

@@ -50,6 +50,11 @@ public interface DishService extends IService<Dish> {
 
 
     /*
+    *  菜品批量起售
+    * */
+    void startSales(List<Long> ids);
+
+    /*
      * 根据categoryId查找对应菜品  还要看对应菜品在购物车里面是否存在 返回对应数量
      *
      * */

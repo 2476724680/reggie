@@ -133,7 +133,7 @@ public class DishController {
             throw new CustomException("请选择内容");
         }
 
-        dishService.haltSales(ids);
+         dishService.haltSales(ids);
 
         return R.success("修改停售成功");
     }
@@ -152,10 +152,7 @@ public class DishController {
             throw new CustomException("请选择内容");
         }
 
-        LambdaUpdateWrapper<Dish> luw=new LambdaUpdateWrapper<Dish>();
-        luw.in(Dish::getId,ids);
-        luw.set(Dish::getStatus,1); //起售
-        dishService.update(luw);
+        dishService.startSales(ids);
 
         return R.success("修改起售成功");
     }

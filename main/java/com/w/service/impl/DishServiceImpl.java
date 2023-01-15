@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.w.common.BaseContext;
 import com.w.common.CustomException;
+import com.w.common.R;
 import com.w.dto.DishDto;
 import com.w.mapper.DishMapper;
 import com.w.pojo.*;
@@ -12,10 +13,12 @@ import com.w.service.*;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Service
@@ -34,6 +37,9 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
     @Lazy
     private ShoppingCartService shoppingCartService;
 
+    @Autowired
+    private RedisTemplate redisTemplate;
+
     /*
      *
      * 根据DishDto封装数据 在dish和dish_flavor两张表中存储数据
@@ -47,17 +53,22 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
         //获得dish id
         Long dishId = dishDto.getId();
 
-        //对dishFlavor数据进行处理 ——>加入dish id
-        List<DishFlavor> dishFlavors = dishDto.getFlavors();
+        if(dishDto.getFlavors()!=null&&dishDto.getFlavors().size()!=0) {
+            //对dishFlavor数据进行处理 ——>加入dish id
+            List<DishFlavor> dishFlavors = dishDto.getFlavors();
 
-        dishFlavors= dishFlavors.stream().map(dishFlavor -> {
-            dishFlavor.setDishId(dishId);
-            return dishFlavor;
-        }).collect(Collectors.toList());
+            dishFlavors = dishFlavors.stream().map(dishFlavor -> {
+                dishFlavor.setDishId(dishId);
+                return dishFlavor;
+            }).collect(Collectors.toList());
 
-        //存储dishFlavor数据
-        dishFlavorService.saveBatch(dishFlavors);
+            //存储dishFlavor数据
+            dishFlavorService.saveBatch(dishFlavors);
 
+        }
+        //删除redis中对应缓存
+        String key="dish_"+dishDto.getCategoryId()+"_1";
+        redisTemplate.delete(key);
 
     }
 
@@ -123,6 +134,11 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
 
         //存储数据
         dishFlavorService.saveBatch(flavors);
+
+        //删除redis中对应分类缓存
+        String key="dish_"+dishDto.getCategoryId()+"_1";
+
+        redisTemplate.delete(key);
     }
 
 
@@ -139,7 +155,7 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
         //查询对应id 是否是停售的
         LambdaQueryWrapper<Dish> lqw=new LambdaQueryWrapper<Dish>();
 
-        lqw.in(Dish::getId,ids);
+        /*lqw.in(Dish::getId,ids);
         lqw.eq(Dish::getStatus,1);
 
         //有一个菜品没有停售都不能删除
@@ -147,6 +163,17 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
 
         //如果没有停售 抛出业务异常
         if(count>0){
+            throw new CustomException("当前选择的菜品存在正在售卖菜品，不能删除");
+        }*/
+
+        lqw.in(Dish::getId,ids);
+        lqw.eq(Dish::getStatus,0);  //0为停售
+
+        List<Dish> dishes = super.list(lqw);
+
+        if(dishes==null||dishes.size()!=ids.size()){
+            //ids和停售状态查出来的数据条数与传过来的参数的size不同
+            //说明有菜品是起售的
             throw new CustomException("当前选择的菜品存在正在售卖菜品，不能删除");
         }
 
@@ -172,6 +199,15 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
 
         dishFlavorService.remove(lqw2);
 
+        //获取当前菜品对应分类id
+        dishes.stream()
+               .distinct()
+              .forEach(category->{
+            //删除redis对应缓存数据
+            String key="dish_"+category+"_1";
+            redisTemplate.delete(key);
+        });
+
     }
 
 
@@ -186,9 +222,6 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
     @Override
     public void haltSales(List<Long> ids) {
 
-        if(ids==null||ids.size()==0){
-            throw new CustomException("请选择内容停售");
-        }
 
         //没有关联的套餐或者关联的套餐是停售的
         //先查看meal_dish表获得对应的stemealId
@@ -215,6 +248,7 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
                 //说明关联套餐中存在起售套餐 不能停售 抛出业务异常
                 throw new CustomException("当前菜品关联套餐正在售卖 不能停售");
             }
+
         }
         //如果可以停售
 
@@ -223,6 +257,46 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
         luw.in(Dish::getId,ids);
         luw.set(Dish::getStatus,0);  //停售
         super.update(luw);
+
+        //删除redis数据
+        //获取不同的categoryId
+        LambdaQueryWrapper<Dish> lambdaQueryWrapper=new LambdaQueryWrapper<>();
+        lambdaQueryWrapper.in(Dish::getId,ids);
+        List<Dish> dishes = super.list(lambdaQueryWrapper);
+        dishes.stream()
+                .map(dish -> dish.getCategoryId())
+                .distinct()
+                .forEach(category->{
+                    String key="dish_"+category+"_1";
+                    redisTemplate.delete(key);
+                });
+
+    }
+
+
+    /*
+     *  菜品批量起售
+     * */
+    public void startSales(List<Long> ids){
+
+        //更新状态
+        LambdaUpdateWrapper<Dish> luw=new LambdaUpdateWrapper<Dish>();
+        luw.in(Dish::getId,ids);
+        luw.set(Dish::getStatus,1); //起售
+        super.update(luw);
+
+        //获得分类id
+        LambdaQueryWrapper<Dish> lqw=new LambdaQueryWrapper<>();
+        lqw.in(Dish::getId,ids);
+        List<Dish> dishes = super.list(lqw);
+
+        dishes.stream()
+                .map(dish -> dish.getCategoryId())
+                .distinct()
+                .forEach(category->{
+                    String key="dish_"+category+"_1";
+                    redisTemplate.delete(key);
+                });
 
     }
 
@@ -235,18 +309,32 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
 
     public List<DishDto> list(Dish dish){
 
+        List<DishDto> dishDtos =null;
+
+        //构造key
+        String key="dish_"+dish.getCategoryId()+"_"+dish.getStatus();
+
+        //先从redis中获取数据
+        dishDtos =(List<DishDto>) redisTemplate.opsForValue().get(key);
+
+        //如果不为空 直接返回
+        if(dishDtos!=null&&dishDtos.size()!=0){
+            return dishDtos ;
+        }
+
+        //如果为空 先去数据库查询 再存到redis中
+
         //根据categoryId查询
         LambdaQueryWrapper<Dish> lqw=new LambdaQueryWrapper<Dish>();
 
         lqw.eq(dish.getCategoryId()!=null,Dish::getCategoryId,dish.getCategoryId());
         //起售才能找到
         lqw.eq(Dish::getStatus,1);
+        lqw.orderByDesc(Dish::getUpdateTime);
 
         List<Dish> dishes = super.list(lqw);
 
-
-
-        List<DishDto> dishDtos = dishes.stream().map(dish1 -> {
+        dishDtos = dishes.stream().map(dish1 -> {
 
             DishDto dishDto=new DishDto();
 
@@ -274,6 +362,9 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
             return dishDto;
 
         }).collect(Collectors.toList());
+
+        //将查询到的数据存入到redis中
+        redisTemplate.opsForValue().set(key,dishDtos,60, TimeUnit.MINUTES);
 
         return dishDtos;
     }
