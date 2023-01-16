@@ -312,7 +312,7 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
         List<DishDto> dishDtos =null;
 
         //构造key
-        String key="dish_"+dish.getCategoryId()+"_"+dish.getStatus();
+        String key="dish_"+dish.getCategoryId()+"_1";
 
         //先从redis中获取数据
         dishDtos =(List<DishDto>) redisTemplate.opsForValue().get(key);

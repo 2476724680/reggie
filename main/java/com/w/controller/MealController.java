@@ -19,6 +19,8 @@ import com.w.service.MealDishService;
 import com.w.service.MealService;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -40,6 +42,8 @@ public class MealController {
     @Autowired
     private DishService dishService;
 
+    @Autowired
+    private RedisTemplate redisTemplate;
 
     /*
     * 新增套餐
@@ -163,6 +167,14 @@ public class MealController {
         luw.set(Meal::getStatus,0);
         mealService.update(luw);
 
+        //删除对应redis分类缓存
+        LambdaQueryWrapper<Meal> lqw=new LambdaQueryWrapper<>();
+        lqw.in(Meal::getId,ids);
+        mealService.list(lqw).stream()
+                .map(meal -> meal.getCategoryId())
+                .distinct()
+                .forEach(category->redisTemplate.delete("meal_"+category+"_1"));
+
         return R.success("停售成功");
     }
 
@@ -181,6 +193,15 @@ public class MealController {
         luw.in(Meal::getId,ids);
         luw.set(Meal::getStatus,1);
         mealService.update(luw);
+
+        //删除对应redis分类缓存
+        LambdaQueryWrapper<Meal> lqw=new LambdaQueryWrapper<>();
+        lqw.in(Meal::getId,ids);
+        mealService.list(lqw).stream()
+                .map(meal -> meal.getCategoryId())
+                .distinct()
+                .forEach(category->redisTemplate.delete("meal_"+category+"_1"));
+
 
         return R.success("起售成功");
     }

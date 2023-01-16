@@ -16,9 +16,11 @@ import com.w.service.ShoppingCartService;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Service
@@ -32,6 +34,9 @@ public class MealServiceImpl extends ServiceImpl<MealMapper, Meal> implements Me
     @Autowired
     @Lazy
     private ShoppingCartService shoppingCartService;
+
+    @Autowired
+    private RedisTemplate redisTemplate;
     /*
     *
     * 新建套餐 保存套餐信息以及对应dish信息
@@ -41,6 +46,9 @@ public class MealServiceImpl extends ServiceImpl<MealMapper, Meal> implements Me
 
         //先保存套餐信息
         super.save(mealDto);
+
+        //删除redis 对应分类缓存
+        redisTemplate.delete("meal_"+mealDto.getCategoryId()+"_1");
 
         //保存对应dish信息 ——>保存到mael_dish表中
         //遍历List内容 把setmealId 存进去
@@ -80,15 +88,26 @@ public class MealServiceImpl extends ServiceImpl<MealMapper, Meal> implements Me
             throw new CustomException("当前套餐正在售卖，不能删除");
         }
 
+
+        LambdaQueryWrapper<Meal> lambdaQueryWrapper=new LambdaQueryWrapper<>();
+        lambdaQueryWrapper.in(Meal::getId,ids);
+
+        //删除对应套餐分类缓存
+        super.list(lambdaQueryWrapper)
+                .stream()
+                .map(meal -> meal.getCategoryId())
+                .distinct()
+                .forEach(category->redisTemplate.delete("meal_"+category+"_1"));
+
         //如果可以删除  先删除套餐数据
         super.removeByIds(ids);
 
         //再删除套餐对应菜品
-        LambdaQueryWrapper<MealDish> lambdaQueryWrapper=new LambdaQueryWrapper<MealDish>();
+        LambdaQueryWrapper<MealDish> lambdaQueryWrapperDish=new LambdaQueryWrapper<MealDish>();
 
-        lambdaQueryWrapper.in(MealDish::getSetmealId,ids);
+        lambdaQueryWrapperDish.in(MealDish::getSetmealId,ids);
 
-        mealDishService.remove(lambdaQueryWrapper);
+        mealDishService.remove(lambdaQueryWrapperDish);
     }
 
 
@@ -135,6 +154,9 @@ public class MealServiceImpl extends ServiceImpl<MealMapper, Meal> implements Me
         //修改套餐数据
         super.updateById(mealDto);
 
+        //删除该套餐对应的分类redis缓存
+        redisTemplate.delete("meal_"+mealDto.getCategoryId()+"_1");
+
         //删除对应mealId数据
         LambdaQueryWrapper<MealDish> lqw=new LambdaQueryWrapper<MealDish>();
         lqw.eq(MealDish::getSetmealId,mealDto.getId());
@@ -163,6 +185,18 @@ public class MealServiceImpl extends ServiceImpl<MealMapper, Meal> implements Me
      * */
     public List<MealDto> list(Meal meal){
 
+        List<MealDto> mealDtoes =null;
+
+        //先去redis查询
+        String key="meal_"+meal.getCategoryId()+"_1";
+        mealDtoes = (List<MealDto>) (redisTemplate.opsForValue().get(key));
+
+        //如果能查询 直接返回 如果为空 去数据库查询后缓存到redis
+
+        if(mealDtoes!=null&&mealDtoes.size()!=0){
+            return mealDtoes;
+        }
+
         //根据分类id查询对应套餐
         LambdaQueryWrapper<Meal> lqw=new LambdaQueryWrapper<Meal>();
         lqw.eq(meal.getCategoryId()!=null,Meal::getCategoryId,meal.getCategoryId());
@@ -171,8 +205,8 @@ public class MealServiceImpl extends ServiceImpl<MealMapper, Meal> implements Me
 
         List<Meal> meals = super.list(lqw);
 
-        //查询购物车中是否该套餐
-        List<MealDto> mealDtoes = meals.stream().map(meal1 -> {
+        //查询购物车中是否有该套餐
+        mealDtoes = meals.stream().map(meal1 -> {
 
             //拷贝
             MealDto mealDto = new MealDto();
@@ -191,6 +225,9 @@ public class MealServiceImpl extends ServiceImpl<MealMapper, Meal> implements Me
             }
             return mealDto;
         }).collect(Collectors.toList());
+
+        //将查询到的数据存到redis中
+        redisTemplate.opsForValue().set(key,mealDtoes,60, TimeUnit.MINUTES);
 
         return mealDtoes;
 
