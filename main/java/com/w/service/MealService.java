@@ -49,4 +49,8 @@ public interface MealService extends IService<Meal> {
      * */
     List<MealDto> list(Meal meal);
 
+    /*
+    * 套餐批量起售
+    * */
+    void startSales(List<Long> ids);
 }

@@ -31,6 +31,7 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
     private MealDishService mealDishService;
 
     @Autowired
+    @Lazy
     private MealService mealService;
 
     @Autowired
@@ -295,22 +296,25 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
         List<DishDto> dishDtos =null;
 
         //构造key
-        String key="dish_"+dish.getCategoryId()+"_1";
+        String key = "dish_" + dish.getCategoryId() + "_1";
+        if(dish.getName()==null) {
 
-        //先从redis中获取数据
-        dishDtos =(List<DishDto>) redisTemplate.opsForValue().get(key);
+            //先从redis中获取数据
+            dishDtos = (List<DishDto>) redisTemplate.opsForValue().get(key);
 
-        //如果不为空 直接返回
-        if(dishDtos!=null&&dishDtos.size()!=0){
-            return dishDtos ;
+            //如果不为空 直接返回
+            if (dishDtos != null && dishDtos.size() != 0) {
+                return dishDtos;
+            }
         }
-
         //如果为空 先去数据库查询 再存到redis中
 
         //根据categoryId查询
         LambdaQueryWrapper<Dish> lqw=new LambdaQueryWrapper<Dish>();
 
         lqw.eq(dish.getCategoryId()!=null,Dish::getCategoryId,dish.getCategoryId());
+        //根据名字模糊查询
+        lqw.like(dish.getName()!=null,Dish::getName,dish.getName());
         //起售才能找到
         lqw.eq(Dish::getStatus,1);
         lqw.orderByDesc(Dish::getUpdateTime);

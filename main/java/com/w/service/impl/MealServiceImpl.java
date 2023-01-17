@@ -1,11 +1,13 @@
 package com.w.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.w.common.CustomException;
 import com.w.dto.MealDto;
 import com.w.mapper.MealMapper;
+import com.w.pojo.Dish;
 import com.w.pojo.Meal;
 import com.w.pojo.MealDish;
 import com.w.pojo.ShoppingCart;
@@ -29,6 +31,9 @@ public class MealServiceImpl extends ServiceImpl<MealMapper, Meal> implements Me
 
     @Autowired
     private MealDishService mealDishService;
+
+    @Autowired
+    private DishService dishService;
 
 
     @Autowired
@@ -231,5 +236,45 @@ public class MealServiceImpl extends ServiceImpl<MealMapper, Meal> implements Me
 
         return mealDtoes;
 
+    }
+
+    /*
+     * 套餐批量起售
+     * 需要套餐里面的菜品都是起售的才能起售
+     * */
+    public void startSales(List<Long> ids){
+
+        LambdaQueryWrapper<MealDish> lambdaQueryWrapper=new LambdaQueryWrapper<>();
+        lambdaQueryWrapper.in(MealDish::getSetmealId,ids);
+        List<MealDish> mealDishes = mealDishService.list(lambdaQueryWrapper);
+
+        List<Long> dishIds = mealDishes.stream()
+                .map(mealDish -> mealDish.getDishId())
+                .distinct()
+                .collect(Collectors.toList());
+
+        LambdaQueryWrapper<Dish> lambdaQueryWrapperDish=new LambdaQueryWrapper<>();
+        lambdaQueryWrapperDish.in(Dish::getId,dishIds);
+        lambdaQueryWrapperDish.eq(Dish::getStatus,0);
+        int count = dishService.count(lambdaQueryWrapperDish);
+
+        if(count>0){
+            //说明套餐中有菜品是停售的 套餐不能起售
+            throw new CustomException("套餐中存在停售菜品，不能起售");
+        }
+
+
+        LambdaUpdateWrapper<Meal> luw=new LambdaUpdateWrapper<Meal>();
+        luw.in(Meal::getId,ids);
+        luw.set(Meal::getStatus,1);
+        super.update(luw);
+
+        //删除对应redis分类缓存
+        LambdaQueryWrapper<Meal> lqw=new LambdaQueryWrapper<>();
+        lqw.in(Meal::getId,ids);
+        super.list(lqw).stream()
+                .map(meal -> meal.getCategoryId())
+                .distinct()
+                .forEach(category->redisTemplate.delete("meal_"+category+"_1"));
     }
 }

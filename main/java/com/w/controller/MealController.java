@@ -189,18 +189,7 @@ public class MealController {
             throw new CustomException("请选择内容");
         }
 
-        LambdaUpdateWrapper<Meal> luw=new LambdaUpdateWrapper<Meal>();
-        luw.in(Meal::getId,ids);
-        luw.set(Meal::getStatus,1);
-        mealService.update(luw);
-
-        //删除对应redis分类缓存
-        LambdaQueryWrapper<Meal> lqw=new LambdaQueryWrapper<>();
-        lqw.in(Meal::getId,ids);
-        mealService.list(lqw).stream()
-                .map(meal -> meal.getCategoryId())
-                .distinct()
-                .forEach(category->redisTemplate.delete("meal_"+category+"_1"));
+        mealService.startSales(ids);
 
 
         return R.success("起售成功");
