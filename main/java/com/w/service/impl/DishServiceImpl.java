@@ -199,14 +199,8 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
 
         dishFlavorService.remove(lqw2);
 
-        //获取当前菜品对应分类id
-        dishes.stream()
-               .distinct()
-              .forEach(category->{
-            //删除redis对应缓存数据
-            String key="dish_"+category+"_1";
-            redisTemplate.delete(key);
-        });
+        //删除对应redis缓存
+        deleteByCategory(dishes);
 
     }
 
@@ -263,13 +257,7 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
         LambdaQueryWrapper<Dish> lambdaQueryWrapper=new LambdaQueryWrapper<>();
         lambdaQueryWrapper.in(Dish::getId,ids);
         List<Dish> dishes = super.list(lambdaQueryWrapper);
-        dishes.stream()
-                .map(dish -> dish.getCategoryId())
-                .distinct()
-                .forEach(category->{
-                    String key="dish_"+category+"_1";
-                    redisTemplate.delete(key);
-                });
+        deleteByCategory(dishes);
 
     }
 
@@ -290,13 +278,8 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
         lqw.in(Dish::getId,ids);
         List<Dish> dishes = super.list(lqw);
 
-        dishes.stream()
-                .map(dish -> dish.getCategoryId())
-                .distinct()
-                .forEach(category->{
-                    String key="dish_"+category+"_1";
-                    redisTemplate.delete(key);
-                });
+        //删除对应redis缓存
+        deleteByCategory(dishes);
 
     }
 
@@ -367,5 +350,15 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
         redisTemplate.opsForValue().set(key,dishDtos,60, TimeUnit.MINUTES);
 
         return dishDtos;
+    }
+
+
+    //遍历删除redis对应分类缓存
+    public void deleteByCategory(List<Dish> dishes){
+
+        dishes.stream()
+                .map(dish -> dish.getCategoryId())
+                .distinct()
+                .forEach(category-> redisTemplate.delete("dish_"+category+"_1"));
     }
 }
